@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+requests
+python-dotenv
+pydantic
+PyMuPDF
+supabase
+openai
+crawl4ai
+streamlit
