@@ -28,18 +28,12 @@ This project is an AI-powered web scraping tool that can crawl and process docum
     cd Scraper_website_tool
     ```
 
-2. Create a virtual environment and activate it:
-    ```sh
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
-
-3. Install the required packages:
+2. Install the required packages:
     ```sh
     pip install -r requirements.txt
     ```
 
-4. Create a [.env](example.env) file in the project root and add your OpenAI and Supabase credentials:
+3. Create a [.env](example.env) file in the project root and add your OpenAI and Supabase credentials:
     ```env
     OPENAI_API_KEY=your_openai_api_key
     SUPABASE_URL=your_supabase_url
@@ -48,7 +42,7 @@ This project is an AI-powered web scraping tool that can crawl and process docum
     OPENAI_MODEL=gpt-4o-mini
     ```
 
-5. Set up the database table in Supabase:
+4. Set up the database table in Supabase:
     - Open the Supabase Dashboard.
     - Navigate to the SQL Editor.
     - Create a new query.
