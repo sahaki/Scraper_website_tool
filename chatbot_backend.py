@@ -42,6 +42,7 @@ embed_dim = os.getenv('SUPABASE_VECTOR_DIM', 1536)
 
 SUMMARIZER_PROMPT: str = None # Cache variable for the summarizer prompt
 QA_PROMPT: str = None  # Global cache for the QA prompt
+REFORMAT_CHUNK_PROMPT: str = None # Global cache for the reformat chunk prompt
 
 # Configure Google Generative AI
 if not OPENAI_API_KEY:
@@ -74,6 +75,31 @@ class ProcessedChunk:
     content: str
     metadata: Dict[str, Any]
     embedding: List[float]
+
+# Define new async function to reformat text from a chunk
+async def reformat_text(chunk: str) -> str:
+    """Reformat the chunk text using the system prompt from reformat_chunk.md."""
+    global REFORMAT_CHUNK_PROMPT
+    if REFORMAT_CHUNK_PROMPT is None:
+        try:
+            with open('./system_prompts/reformat_chunk.md', 'r') as file:
+                REFORMAT_CHUNK_PROMPT = file.read()
+        except Exception as e:
+            print(f"Error loading reformat prompt: {e}")
+            return ''
+    
+    try:
+        response = await openai_client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": REFORMAT_CHUNK_PROMPT},
+                {"role": "user", "content": f"Reformat the following content:\n{chunk}"}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error in reformat_text: {e}")
+        return ''
 
 # Define new async function to get Q&A from a chunk
 async def get_questions_and_answers(chunk: str) -> Dict[str, Any]:
@@ -131,8 +157,6 @@ async def get_summarize(chunk: str) -> str:
     except Exception as e:
         print(f"Error getting summary: {e}")
         return ''
-    
-    
 
 def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
     """Split text into chunks, respecting code blocks and paragraphs."""
@@ -192,16 +216,25 @@ async def chunk_text_with_qa(text: str, chunk_size: int = 5000) -> List[Any]:
 
         # If we're at the end of the text, just take what's left
         if end >= text_length:
-            chunks.append(text[start:].strip())
+            content = text[start:].strip()
+            if content:  # Check that the text is not empty
+                chunk = await reformat_text(content)
+                if chunk:
+                    chunks.append(chunk)
 
-            # Get Q&A for this chunk and append to the list if available
-            qa = await get_questions_and_answers(text[start:].strip())
-            if qa:
-                text = ""
-                for q in qa['qa']:
-                    text += q.get('title', '') + '\n' + q.get('q_and_a', '') + '\n'
-                if text:
-                    chunks.append(text)
+                    # Get Summarize for this chunk and append to the list if available
+                    summarize = await get_summarize(chunk)
+                    if summarize:
+                        chunks.append(summarize)
+
+                    # Get Q&A for this chunk and append to the list if available
+                    qa = await get_questions_and_answers(chunk)
+                    if qa:
+                        qa_text = ""
+                        for q in qa['qa']:
+                            qa_text += q.get('title', '') + '\n' + q.get('q_and_a', '') + '\n'
+                        if qa_text:
+                            chunks.append(qa_text)
             break
 
         # Try to find a code block boundary first (```)
@@ -224,8 +257,14 @@ async def chunk_text_with_qa(text: str, chunk_size: int = 5000) -> List[Any]:
             if last_period > chunk_size * 0.3:  # Only break if we're past 30% of chunk_size
                 end = start + last_period + 1
 
+       # Extract and verify the chunk text is not empty
+        content = text[start:end].strip()
+        if not content:  # If empty, skip reformat processing
+            start = max(start + 1, end)
+            continue
+
         # Extract chunk and clean it up
-        chunk = text[start:end].strip()
+        chunk = await reformat_text(content)
         if chunk:
             chunks.append(chunk)
 
