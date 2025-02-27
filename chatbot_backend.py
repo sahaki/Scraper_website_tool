@@ -65,6 +65,7 @@ class QueryRequest(BaseModel):
     url: str
     supabase_table: str
     source_name: str
+    expand_details: str
 
 @dataclass
 class ProcessedChunk:
@@ -158,7 +159,7 @@ async def get_summarize(chunk: str) -> str:
         print(f"Error getting summary: {e}")
         return ''
 
-def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
+async def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
     """Split text into chunks, respecting code blocks and paragraphs."""
 
     chunks = []
@@ -171,7 +172,11 @@ def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
 
         # If we're at the end of the text, just take what's left
         if end >= text_length:
-            chunks.append(text[start:].strip())
+            content = text[start:].strip()
+            if content:  # Check that the text is not empty
+                chunk = await reformat_text(content)
+                if chunk:
+                    chunks.append(chunk)
             break
 
         # Try to find a code block boundary first (```)
@@ -194,8 +199,14 @@ def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
             if last_period > chunk_size * 0.3:  # Only break if we're past 30% of chunk_size
                 end = start + last_period + 1
 
+        # Extract and verify the chunk text is not empty
+        content = text[start:end].strip()
+        if not content:  # If empty, skip reformat processing
+            start = max(start + 1, end)
+            continue
+
         # Extract chunk and clean it up
-        chunk = text[start:end].strip()
+        chunk = await reformat_text(content)
         if chunk:
             chunks.append(chunk)
 
@@ -204,7 +215,7 @@ def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
 
     return chunks
 
-async def chunk_text_with_qa(text: str, chunk_size: int = 5000) -> List[Any]:
+async def chunk_text_with_qa(text: str, chunk_size: int = 5000) -> List[str]:
     """"Split text into chunks, respecting code blocks and paragraphs. + append Q&A data for each chunk."""
     chunks = []
     start = 0
@@ -367,23 +378,25 @@ async def insert_chunk(chunk: ProcessedChunk,supabase_table: str):
         print(f"Error inserting chunk: {e}")
         return None
     
-async def delete_chunk_by_url(url: str,supabase_table: str):
+def delete_chunk_by_url(url: str, supabase_table: str):
     """Delete a chunk from Supabase by URL."""
     try:
-        result = await supabase.table(supabase_table).delete().eq("url", url).execute()
+        result = supabase.table(supabase_table).delete().eq("url", url).execute()
         print(f"Deleted chunk(s) with URL: {url}")
         return result
     except Exception as e:
         print(f"Error deleting chunk: {e}")
         return None
 
-async def process_and_store_document(url: str, supabase_table: str, markdown: str, source_name: str):
+async def process_and_store_document(url: str, supabase_table: str, markdown: str, source_name: str, expand_details: str):
     """Process a document and store its chunks in parallel."""
-    # Split into chunks with Q&A data
-    chunks = await chunk_text_with_qa(markdown)
+    if expand_details == "Yes":
+        print(f"Expanding details for URL: {url}")
+        chunks = await chunk_text_with_qa(markdown)
+    else:
+        print(f"Non Expanding details for URL: {url}")
+        chunks = await chunk_text(markdown)
  
-    # return chunks
-    # Process chunks in parallel after checking that each chunk is a non-empty string
     tasks = [
         process_chunk(chunk, i, url, source_name) 
         for i, chunk in enumerate(chunks)
@@ -393,17 +406,16 @@ async def process_and_store_document(url: str, supabase_table: str, markdown: st
 
     existing_chunks = supabase.table(supabase_table).select("id").eq("url", url).execute()
     if existing_chunks.data:
-        # Delete old chunks if they exist
-        await delete_chunk_by_url(url,supabase_table)
+        # Delete old chunks without await since delete_chunk_by_url is synchronous now
+        delete_chunk_by_url(url, supabase_table)
     
-    # Store chunks in parallel
     insert_tasks = [
         insert_chunk(chunk, supabase_table) 
         for chunk in processed_chunks
     ]
     await asyncio.gather(*insert_tasks)
 
-async def crawl_parallel(urls: List[str], supabase_table: str, source_name: str, max_concurrent: int = 5):
+async def crawl_parallel(urls: List[str], supabase_table: str, source_name: str, expand_details: str, max_concurrent: int = 5):
     """Crawl multiple URLs in parallel with a concurrency limit."""
     browser_config = BrowserConfig(
         headless=True,
@@ -436,7 +448,7 @@ async def crawl_parallel(urls: List[str], supabase_table: str, source_name: str,
                             text += page.get_text()
                         pdf_document.close()
 
-                        await process_and_store_document(url, supabase_table, text, source_name)
+                        await process_and_store_document(url, supabase_table, text, source_name, expand_details)
                         print(f"Successfully processed PDF: {url}")
                     except Exception as e:
                         print(f"Failed to process PDF: {url} - Error: {e}")
@@ -449,7 +461,7 @@ async def crawl_parallel(urls: List[str], supabase_table: str, source_name: str,
                     )
                     if result.success:
                         print(f"Successfully crawled: {url}")
-                        await process_and_store_document(url, supabase_table, result.markdown_v2.raw_markdown, source_name)
+                        await process_and_store_document(url, supabase_table, result.markdown_v2.raw_markdown, source_name, expand_details)
                     else:
                         print(f"Failed: {url} - Error: {result.error_message}")
         
@@ -485,6 +497,7 @@ async def query_model(request: QueryRequest):
     url = request.url
     supabase_table = request.supabase_table
     source_name = request.source_name
+    expand_details = request.expand_details
 
     if scrape_type == "XML":
         print(f"Fetching URLs from XML sitemap: {url}")
@@ -504,7 +517,7 @@ async def query_model(request: QueryRequest):
         print(f"Multiple URLs mode: {urls}")
     
     print(f"Found {len(urls)} URLs to crawl")
-    await crawl_parallel(urls, supabase_table, source_name)
+    await crawl_parallel(urls, supabase_table, source_name, expand_details)
     
     return JSONResponse(content={"message": "Crawling started successfully.", "url_count": len(urls)}, status_code=200)
 
