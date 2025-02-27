@@ -1,0 +1,1 @@
+Reformat the following content to improve readability while keeping all the original information intact. Ensure that the structure is clear, easy to follow, and well-organized with proper sectioning and bullet points. Use headings and subheadings where appropriate. Do not add, remove, or change any information—only improve its formatting and clarity.
