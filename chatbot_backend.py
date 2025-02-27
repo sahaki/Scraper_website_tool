@@ -140,13 +140,13 @@ async def get_embedding(text: str) -> List[float]:
     """Get embedding vector from OpenAI."""
     try:
         response = await openai_client.embeddings.create(
-            model="text-embedding-3-small",
+            model=embed_model,
             input=text
         )
         return response.data[0].embedding
     except Exception as e:
         print(f"Error getting embedding: {e}")
-        return [0] * 1536  # Return zero vector on error
+        return [0] * embed_dim  # Return zero vector on error
 
 async def process_chunk(chunk: str, chunk_number: int, url: str, source_name: str) -> ProcessedChunk:
     """Process a single chunk of text."""
@@ -223,7 +223,7 @@ async def process_and_store_document(url: str, supabase_table: str, markdown: st
     
     # Store chunks in parallel
     insert_tasks = [
-        insert_chunk(chunk,supabase_table) 
+        insert_chunk(chunk, supabase_table) 
         for chunk in processed_chunks
     ]
     await asyncio.gather(*insert_tasks)
@@ -248,7 +248,7 @@ async def crawl_parallel(urls: List[str], supabase_table: str, source_name: str,
         async def process_url(url: str):
             async with semaphore:
                 parsed_url = urlparse(url)
-                if parsed_url.path.endswith('.pdf'):
+                if (parsed_url.path.endswith('.pdf')):
                     # Handle PDF URL
                     print(f"Processing PDF: {url}")
                     try:
