@@ -125,7 +125,7 @@ async def get_questions_and_answers(chunk: str) -> Dict[str, Any]:
             ],
             response_format={ "type": "json_object" }
         )
-        print(f"Q&A for chunk: {response.choices[0].message.content}")
+        #print(f"Q&A for chunk: {response.choices[0].message.content}")
         return json.loads(response.choices[0].message.content)
     except Exception as e:
         print(f"Error getting Q&A: {e}")
