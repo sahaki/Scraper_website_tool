@@ -26,6 +26,14 @@ with st.form(key="scraping_form"):
     # URL Input
     url = st.text_input("Enter URL:", placeholder="https://www.example.com/sitemap.xml")
 
+    # New Radio Option for Expand the details
+    expand_details = st.radio(
+        "Expand the details",
+        ("No", "Yes"),
+        index=0,  # default is "No"
+        help="AI will help you generate more details of your content and generate Q&A content for the content in your URL."
+    )
+
     # Readonly Source Name
     source_name = st.text_input("Define Source Name:", os.getenv('SUPABASE_SOURCE_TEXT'), disabled=True)
 
@@ -47,7 +55,8 @@ if submit_button:
                             "scrape_type": 'XML',
                             "url": url,
                             "supabase_table": os.getenv("SUPABASE_TABLES"),
-                            "source_name": source_name
+                            "source_name": source_name,
+                            "expand_details": expand_details
                         }
                     )
                     if response.status_code == 200:
