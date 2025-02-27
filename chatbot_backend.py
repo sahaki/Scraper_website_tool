@@ -36,6 +36,12 @@ supabase: Client = create_client(
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PORT = int(os.getenv("BACKEND_PORT", 8000))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL")
+embed_model = os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-3-small')
+embed_dim = os.getenv('SUPABASE_VECTOR_DIM', 1536)
+
+
+SUMMARIZER_PROMPT: str = None # Cache variable for the summarizer prompt
+QA_PROMPT: str = None  # Global cache for the QA prompt
 
 # Configure Google Generative AI
 if not OPENAI_API_KEY:
@@ -69,8 +75,68 @@ class ProcessedChunk:
     metadata: Dict[str, Any]
     embedding: List[float]
 
+# Define new async function to get Q&A from a chunk
+async def get_questions_and_answers(chunk: str) -> Dict[str, Any]:
+    """Extract Q&A from the chunk for RAG."""
+    global QA_PROMPT
+
+    # Load and cache the QA prompt if not already loaded
+    if QA_PROMPT is None:
+        try:
+            with open('./system_prompts/qa.md', 'r') as file:
+                QA_PROMPT = file.read()
+                #print(f"Loaded Q&A Prompt: {QA_PROMPT}")
+        except Exception as e:
+            print(f"Error loading Q&A prompt: {e}")
+            return ''
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": QA_PROMPT},
+                {"role": "user", "content": f"Think of a topic for this content and create a question based on that topic. Chunk content:\n{chunk}..."}
+            ],
+            response_format={ "type": "json_object" }
+        )
+        print(f"Q&A for chunk: {response.choices[0].message.content}")
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        print(f"Error getting Q&A: {e}")
+        return {"qa": []}
+    
+async def get_summarize(chunk: str) -> str:
+    """Extract a summary from the chunk for RAG."""
+    global SUMMARIZER_PROMPT
+
+    # Load and cache the summarizer prompt if not already loaded
+    if SUMMARIZER_PROMPT is None:
+        try:
+            with open('./system_prompts/summarizer.md', 'r') as file:
+                SUMMARIZER_PROMPT = file.read()
+                #print(f"Loaded Summarizer Prompt: {SUMMARIZER_PROMPT}")
+        except Exception as e:
+            print(f"Error loading summarizer prompt: {e}")
+            return ''
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": SUMMARIZER_PROMPT},
+                {"role": "user", "content": f"Summarize chunk content:\n{chunk}..."}
+            ],
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error getting summary: {e}")
+        return ''
+    
+    
+
 def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
     """Split text into chunks, respecting code blocks and paragraphs."""
+
     chunks = []
     start = 0
     text_length = len(text)
@@ -112,6 +178,74 @@ def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
         # Move start position for next chunk
         start = max(start + 1, end)
 
+    return chunks
+
+async def chunk_text_with_qa(text: str, chunk_size: int = 5000) -> List[Any]:
+    """"Split text into chunks, respecting code blocks and paragraphs. + append Q&A data for each chunk."""
+    chunks = []
+    start = 0
+    text_length = len(text)
+
+    while start < text_length:
+        # Calculate end position
+        end = start + chunk_size
+
+        # If we're at the end of the text, just take what's left
+        if end >= text_length:
+            chunks.append(text[start:].strip())
+
+            # Get Q&A for this chunk and append to the list if available
+            qa = await get_questions_and_answers(text[start:].strip())
+            if qa:
+                text = ""
+                for q in qa['qa']:
+                    text += q.get('title', '') + '\n' + q.get('q_and_a', '') + '\n'
+                if text:
+                    chunks.append(text)
+            break
+
+        # Try to find a code block boundary first (```)
+        chunk = text[start:end]
+        code_block = chunk.rfind('```')
+        if code_block != -1 and code_block > chunk_size * 0.3:
+            end = start + code_block
+
+        # If no code block, try to break at a paragraph
+        elif '\n\n' in chunk:
+            # Find the last paragraph break
+            last_break = chunk.rfind('\n\n')
+            if last_break > chunk_size * 0.3:  # Only break if we're past 30% of chunk_size
+                end = start + last_break
+
+        # If no paragraph break, try to break at a sentence
+        elif '. ' in chunk:
+            # Find the last sentence break
+            last_period = chunk.rfind('. ')
+            if last_period > chunk_size * 0.3:  # Only break if we're past 30% of chunk_size
+                end = start + last_period + 1
+
+        # Extract chunk and clean it up
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+            # Get Summarize for this chunk and append to the list if available
+            summarize = await get_summarize(chunk)
+            if summarize:
+                chunks.append(summarize)
+
+            # Get Q&A for this chunk and append to the list if available
+            qa = await get_questions_and_answers(chunk)
+            if qa:
+                text = ""
+                for q in qa['qa']:
+                    text += q.get('title', '') + '\n' + q.get('q_and_a', '') + '\n'
+                if text:
+                    chunks.append(text)
+
+        # Move start position for next chunk
+        start = max(start + 1, end)
+    # print(f"Chunks with Q&A: {chunks}")
     return chunks
 
 async def get_title_and_summary(chunk: str, url: str) -> Dict[str, str]:
@@ -206,13 +340,15 @@ async def delete_chunk_by_url(url: str,supabase_table: str):
 
 async def process_and_store_document(url: str, supabase_table: str, markdown: str, source_name: str):
     """Process a document and store its chunks in parallel."""
-    # Split into chunks
-    chunks = chunk_text(markdown)
-    
-    # Process chunks in parallel
+    # Split into chunks with Q&A data
+    chunks = await chunk_text_with_qa(markdown)
+ 
+    # return chunks
+    # Process chunks in parallel after checking that each chunk is a non-empty string
     tasks = [
         process_chunk(chunk, i, url, source_name) 
         for i, chunk in enumerate(chunks)
+        if isinstance(chunk, str) and chunk.strip()
     ]
     processed_chunks = await asyncio.gather(*tasks)
 
