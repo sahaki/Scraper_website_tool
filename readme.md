@@ -38,8 +38,10 @@ This project is an AI-powered web scraping tool that can crawl and process docum
     OPENAI_API_KEY=your_openai_api_key
     SUPABASE_URL=your_supabase_url
     SUPABASE_SERVICE_KEY=your_supabase_service_key
+    SUPABASE_VECTOR_DIM=1536
     BACKEND_PORT=8000
     OPENAI_MODEL=gpt-4o-mini
+    OPENAI_EMBEDDING_MODEL=text-embedding-3-small
     ```
 
 4. Set up the database table in Supabase:
@@ -55,7 +57,7 @@ This project is an AI-powered web scraping tool that can crawl and process docum
 
 1. Run the FastAPI backend:
     ```sh
-    python chatbot_backend.py
+    python crawler_route.py
     ```
 
 2. The backend will be available at `http://localhost:8000`.
