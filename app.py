@@ -13,8 +13,11 @@ st.markdown("""
 
 # Custom Page Names
 pages = {
+    "Spider Website By URLs": "pages/spider_website.py",
+    "Scraping Website By CSV": "pages/scraping_website csv.py",
     "Scraping Website By URLs": "pages/scraping_website.py",
     "Scraping Website By XML": "pages/scraping_website_xml.py",
+
 }
 
 st.sidebar.title("Navigation")
