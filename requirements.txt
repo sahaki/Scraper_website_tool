@@ -8,3 +8,4 @@ supabase
 openai
 crawl4ai
 streamlit
+beautifulsoup4
