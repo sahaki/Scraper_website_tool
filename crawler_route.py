@@ -10,7 +10,8 @@ from urllib.parse import urlparse
 
 from extensions.crawler import (
     crawl_parallel,
-    get_urls_from_xml
+    get_urls_from_xml,
+    extract_links_from_url  # Add this import
 )
 
 load_dotenv()
@@ -39,6 +40,10 @@ class QueryRequest(BaseModel):
     source_name: str
     expand_details: str
 
+class SpiderRequest(BaseModel):
+    url: str
+    max_depth: int
+
 @app.post("/crawl")
 async def query_model(request: QueryRequest):
     scrape_type = request.scrape_type
@@ -63,6 +68,38 @@ async def query_model(request: QueryRequest):
     print(f"Found {len(urls)} URLs to crawl")
     await crawl_parallel(urls, supabase_table, source_name, expand_details)
     return {"message": "Crawling started successfully.", "url_count": len(urls)}, 200
+
+@app.post("/spider")
+async def spider_website(request: SpiderRequest):
+    url = request.url
+    max_depth = request.max_depth
+
+    print(f"Spidering website: {url}")
+    
+    # Check if the URL is valid
+    try:
+        parsed_url = urlparse(url)
+        if not all([parsed_url.scheme, parsed_url.netloc]):
+            return {"message": "Invalid URL format. Please provide a valid URL with http:// or https:// prefix."}, 400
+    except Exception:
+        return {"message": "Invalid URL format."}, 400
+    
+    try:
+        # Spider the website to get all links
+        links = await extract_links_from_url(url, max_depth)
+        
+        # Filter out duplicates and sort
+        unique_links = sorted(list(set(links)))
+        
+        return {
+            "message": "Website spidered successfully",
+            "url": url,
+            "link_count": len(unique_links),
+            "links": unique_links
+        }
+    except Exception as e:
+        print(f"Error spidering website: {str(e)}")
+        return {"message": f"Error spidering website: {str(e)}"}, 500
 
 if __name__ == "__main__":
     import uvicorn
