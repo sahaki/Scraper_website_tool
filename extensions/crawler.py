@@ -419,3 +419,71 @@ def get_urls_from_xml(url: str) -> List[str]:
     except Exception as e:
         print(f"Error fetching sitemap: {e}")
         return []
+
+async def extract_links_from_url(url: str, max_depth: int = 1) -> List[str]:
+    """Spider a website to extract all links up to a certain depth."""
+    print(f"Spidering website: {url} (max depth: {max_depth})")
+    
+    browser_config = BrowserConfig(
+        headless=True,
+        verbose=False,
+        extra_args=["--disable-gpu", "--disable-dev-shm-usage", "--no-sandbox"],
+    )
+    crawl_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
+    crawler = AsyncWebCrawler(config=browser_config)
+    
+    all_links = set()
+    base_domain = urlparse(url).netloc
+    
+    async def crawl_page(page_url, current_depth):
+        if current_depth > max_depth:
+            return
+            
+        try:
+            await crawler.start()
+            result = await crawler.arun(
+                url=page_url,
+                config=crawl_config,
+                session_id=f"spider-session-{current_depth}"
+            )
+            
+            if result.success:
+                # Extract links from HTML using BeautifulSoup
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(result.html, 'html.parser')
+                
+                links = []
+                for a_tag in soup.find_all('a', href=True):
+                    href = a_tag['href']
+                    
+                    # Handle relative URLs
+                    if href.startswith('/'):
+                        parsed_base = urlparse(page_url)
+                        href = f"{parsed_base.scheme}://{parsed_base.netloc}{href}"
+                    
+                    # Filter links - keep only those from the same domain
+                    if urlparse(href).netloc == base_domain:
+                        print(f"Found link: {href}")
+                        links.append(href)
+                
+                # Add unique links to our set
+                for link in links:
+                    if link not in all_links:
+                        all_links.add(link)
+                        
+                        # Recursively crawl if not at max depth
+                        if current_depth < max_depth:
+                            await crawl_page(link, current_depth + 1)
+                            
+            else:
+                print(f"Failed to crawl: {page_url} - Error: {result.error_message}")
+                
+        except Exception as e:
+            print(f"Error crawling {page_url}: {str(e)}")
+        finally:
+            await crawler.close()
+    
+    # Start crawling from the initial URL
+    await crawl_page(url, 1)
+    
+    return list(all_links)
