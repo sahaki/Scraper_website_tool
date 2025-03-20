@@ -13,7 +13,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Page Title
-st.title("🛠 Scraping Website Tool")
+st.title("🛠 Scraping Website by XML Tool")
 
 # Description
 st.write("This tool helps you scrape data from websites with XML sources and store it in Supabase.")
